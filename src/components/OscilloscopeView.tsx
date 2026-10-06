@@ -1,7 +1,8 @@
 /**
  * PowerLab - High-Performance Multi-Channel Digital Oscilloscope & FFT Spectrum
  * HTML5 Canvas rendering for 60 FPS waveform visualization with calibrated graticules,
- * crosshair cursor telemetry, channel selectors, and real-time FFT spectrum bar graphs.
+ * crosshair cursor telemetry, channel selectors, real-time FFT spectrum,
+ * and Active Pair Conduction Timeline Bar matching RectifierLab.
  */
 
 import React, { useRef, useEffect, useState, useMemo } from 'react';
@@ -10,7 +11,7 @@ import {
   HarmonicComponent,
   PowerMetrics,
 } from '../types/powerTypes';
-import { Activity, BarChart2, Eye, EyeOff, Crosshair, ZoomIn, ZoomOut } from 'lucide-react';
+import { BarChart2, Compass } from 'lucide-react';
 
 interface OscilloscopeViewProps {
   steps: SimulationStep[];
@@ -45,6 +46,46 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
 
   const activeStep = hoverIndex !== null && steps[hoverIndex] ? steps[hoverIndex] : steps[currentStepIndex];
 
+  // Map pair name to distinct background color
+  const getPairColor = (name: string): string => {
+    if (name === 'DFW') return '#b45309'; // Warm amber/orange for freewheeling
+    if (name.includes('T1') || name.includes('D1')) return '#0f766e'; // Teal
+    if (name.includes('T2') || name.includes('T3')) return '#0369a1'; // Blue
+    if (name.includes('T4') || name.includes('T5')) return '#4338ca'; // Indigo
+    if (name.includes('T6')) return '#7e22ce'; // Purple
+    if (name === 'OFF') return '#1e293b'; // Dark slate
+    return '#047857'; // Emerald
+  };
+
+  // Derive continuous conduction segments for the ACTIVE PAIR bar
+  const activePairIntervals = useMemo(() => {
+    if (!steps || steps.length === 0) return [];
+    const intervals: { name: string; startDeg: number; endDeg: number; color: string }[] = [];
+    let currentName = steps[0].activePairName || 'OFF';
+    let startDeg = 0;
+
+    for (let i = 1; i < steps.length; i++) {
+      const stepName = steps[i].activePairName || 'OFF';
+      if (stepName !== currentName) {
+        intervals.push({
+          name: currentName,
+          startDeg,
+          endDeg: steps[i].wtDeg,
+          color: getPairColor(currentName),
+        });
+        currentName = stepName;
+        startDeg = steps[i].wtDeg;
+      }
+    }
+    intervals.push({
+      name: currentName,
+      startDeg,
+      endDeg: 360,
+      color: getPairColor(currentName),
+    });
+    return intervals;
+  }, [steps]);
+
   // Draw oscilloscope waveforms
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -61,7 +102,7 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
     ctx.fillRect(0, 0, width, height);
 
     // Calculate layout: split into Waveform viewport (top/left) and FFT (bottom or right if enabled)
-    const fftHeight = showFft ? Math.min(140, height * 0.3) : 0;
+    const fftHeight = showFft ? Math.min(130, height * 0.28) : 0;
     const scopeHeight = height - fftHeight;
 
     // Draw Graticule (Division Grids)
@@ -190,7 +231,7 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
       const yGateBase = scopeHeight - 8;
       for (let i = 0; i < steps.length; i++) {
         const x = mapX(i);
-        const y = steps[i].ig1 > 0 ? yGateBase - 22 : yGateBase;
+        const y = steps[i].ig1 > 0 ? yGateBase - 20 : yGateBase;
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
@@ -256,7 +297,7 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
       // FFT Header
       ctx.fillStyle = '#94a3b8';
       ctx.font = '10px monospace';
-      ctx.fillText(`DFT HARMONIC SPECTRUM (Source Line Current Is) | Fundamental 50Hz | THD = ${metrics.thdCurrent.toFixed(1)}%`, 14, scopeHeight + 14);
+      ctx.fillText(`DFT HARMONIC SPECTRUM (Source Current Is) | Fundamental 50Hz | THD = ${metrics.thdCurrent.toFixed(1)}%`, 14, scopeHeight + 14);
 
       const maxMag = Math.max(1e-4, ...harmonics.map((h) => h.magnitude));
       const barCount = Math.min(25, harmonics.length);
@@ -268,7 +309,6 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
         const bx = 20 + k * (barWidth + 6);
         const by = fftTop + fftAvailableH - barH;
 
-        // Gradient for harmonic bar
         const gradient = ctx.createLinearGradient(0, by, 0, fftTop + fftAvailableH);
         if (h.order === 1) {
           gradient.addColorStop(0, '#38bdf8');
@@ -322,7 +362,6 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
     setHoverIndex(idx);
     setMousePos({ x, y });
 
-    // If dragging with primary button, scrub phase
     if (e.buttons === 1) {
       const step = steps[idx];
       if (step) onScrubPhase(step.wtDeg);
@@ -346,8 +385,10 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
     if (step) onScrubPhase(step.wtDeg);
   };
 
+  const curWtDeg = steps[currentStepIndex]?.wtDeg || 0;
+
   return (
-    <div className="relative w-full h-full min-h-[460px] bg-slate-950/90 rounded-xl border border-slate-800/80 p-4 flex flex-col justify-between shadow-2xl backdrop-blur-md">
+    <div className="relative w-full h-full min-h-[460px] bg-slate-950/95 rounded-xl border border-slate-800/80 p-4 flex flex-col justify-between shadow-2xl backdrop-blur-md">
       {/* Top Channel Controls & Telemetry */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2 z-10">
         {/* Channel Toggle Buttons */}
@@ -443,12 +484,12 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
         </div>
       </div>
 
-      {/* Main Canvas */}
-      <div className="relative flex-1 w-full min-h-[300px]">
+      {/* Main Canvas Viewport */}
+      <div className="relative flex-1 w-full min-h-[260px]">
         <canvas
           ref={canvasRef}
           width={920}
-          height={480}
+          height={440}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
@@ -460,7 +501,7 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
           <div className="absolute top-3 right-3 bg-slate-900/90 border border-slate-700/80 rounded-lg p-2.5 font-mono text-xs shadow-xl backdrop-blur-md pointer-events-none space-y-1">
             <div className="text-slate-400 border-b border-slate-800 pb-1 flex justify-between gap-4">
               <span>wt: {activeStep.wtDeg.toFixed(1)}°</span>
-              <span>t: {(activeStep.time * 1000).toFixed(2)} ms</span>
+              <span>Pair: <strong className="text-amber-300">{activeStep.activePairName}</strong></span>
             </div>
             {showCh1 && (
               <div className="flex justify-between gap-4">
@@ -484,18 +525,54 @@ export const OscilloscopeView: React.FC<OscilloscopeViewProps> = ({
         )}
       </div>
 
-      {/* Footer Graticule Scale Markers */}
-      <div className="flex items-center justify-between pt-2 border-t border-slate-900 text-[11px] font-mono text-slate-400">
-        <div className="flex items-center gap-4">
-          <span className="text-slate-400">30° / div</span>
-          <span className="text-cyan-400">● Source v_s</span>
-          <span className="text-amber-400">● Output v_o</span>
-          <span className="text-emerald-400">● Load i_o</span>
-          <span className="text-rose-400">● Switch v_T1</span>
+      {/* ================= ACTIVE PAIR CONDUCTION TIMELINE BAR ================= */}
+      <div className="mt-2 bg-slate-900/90 border border-slate-800 rounded-lg p-1.5 flex items-center gap-2 font-mono text-xs">
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-1 shrink-0">
+          ACTIVE PAIR
+        </span>
+        <div className="relative flex-1 h-6 rounded bg-slate-950 border border-slate-800/80 overflow-hidden flex">
+          {activePairIntervals.map((interval, idx) => (
+            <div
+              key={idx}
+              style={{
+                width: `${((interval.endDeg - interval.startDeg) / 360) * 100}%`,
+                backgroundColor: interval.color,
+              }}
+              className="h-full flex items-center justify-center text-[10px] font-bold text-white/95 border-r border-slate-900/50 truncate px-1 select-none"
+              title={`${interval.name}: ${interval.startDeg.toFixed(1)}° to ${interval.endDeg.toFixed(1)}°`}
+            >
+              {interval.name}
+            </div>
+          ))}
+
+          {/* Yellow Phase Cursor Line matching current angle wt */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-yellow-400 shadow-md shadow-yellow-400 z-10 pointer-events-none"
+            style={{ left: `${(curWtDeg / 360) * 100}%` }}
+          />
         </div>
-        <div className="text-slate-400">
-          Click or drag across oscilloscope to scrub phase angle wt
+      </div>
+
+      {/* Angle wt Scrubber Slider */}
+      <div className="flex items-center justify-between gap-3 mt-2 px-1 text-xs font-mono">
+        <div className="flex items-center gap-2 flex-1">
+          <span className="text-slate-400 flex items-center gap-1">
+            <Compass className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Angle wt:</span>
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="360"
+            step="0.5"
+            value={Math.round(curWtDeg)}
+            onChange={(e) => onScrubPhase(Number(e.target.value))}
+            className="flex-1 accent-cyan-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+          />
         </div>
+        <span className="text-cyan-300 font-bold w-14 text-right">
+          {curWtDeg.toFixed(1)}°
+        </span>
       </div>
     </div>
   );

@@ -1,274 +1,398 @@
 /**
  * PowerLab - Parametric Controls
- * Real-time sliders, presets, and physical semiconductor / load / grid parameters.
+ * Structured directly after RectifierLab with 3 Interactive Panels:
+ * 1. Converter Topology & Quick Device Setup
+ * 2. Firing Angle α & Freewheeling Diode (D_FW) Toggle
+ * 3. Load & Source Parameters (R, RL, RLE, Source RMS, Inductance)
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
   TopologyId,
   GridParams,
   SemiconductorParams,
   LoadParams,
   ConverterControls,
+  SimulationStep,
 } from '../types/powerTypes';
-import { Sliders, Cpu, Activity, Zap, Shield, RotateCcw } from 'lucide-react';
+import { Sliders, Cpu, Activity, Zap, CheckCircle2 } from 'lucide-react';
 
 interface ParametricControlsProps {
   topology: TopologyId;
+  onSelectTopology: (t: TopologyId) => void;
   grid: GridParams;
   semi: SemiconductorParams;
   load: LoadParams;
   controls: ConverterControls;
+  currentStep: SimulationStep;
   onChangeGrid: (g: Partial<GridParams>) => void;
   onChangeSemi: (s: Partial<SemiconductorParams>) => void;
   onChangeLoad: (l: Partial<LoadParams>) => void;
   onChangeControls: (c: Partial<ConverterControls>) => void;
-  onResetDefaults: () => void;
 }
 
 export const ParametricControls: React.FC<ParametricControlsProps> = ({
   topology,
+  onSelectTopology,
   grid,
   semi,
   load,
   controls,
+  currentStep,
   onChangeGrid,
   onChangeSemi,
   onChangeLoad,
   onChangeControls,
-  onResetDefaults,
 }) => {
-  const [activeTab, setActiveTab] = useState<'control' | 'grid' | 'load' | 'device'>('control');
-
+  const is1P = !topology.startsWith('3P');
   const alphaPresets = [0, 30, 45, 60, 90, 120, 150];
 
+  const isDfwActive =
+    currentStep.activePairName === 'DFW' ||
+    (controls.enableFwd && currentStep.vo <= 0.1 && currentStep.io > 0.05);
+
+  // Quick Device Setup presets
+  const handleQuickSetup = (mode: 'diodes' | 'thyristors' | 'semi') => {
+    if (mode === 'diodes') {
+      if (is1P) {
+        onSelectTopology('1P_FULL_BRIDGE_DIODE');
+      } else {
+        onSelectTopology('3P_FULL_BRIDGE_6PULSE');
+      }
+      onChangeControls({ firingAngleAlpha: 0 });
+    } else if (mode === 'thyristors') {
+      if (is1P) {
+        onSelectTopology('1P_FULL_BRIDGE_SCR');
+      } else {
+        onSelectTopology('3P_FULL_BRIDGE_6PULSE');
+      }
+      onChangeControls({ firingAngleAlpha: 45 });
+    } else if (mode === 'semi') {
+      if (is1P) {
+        onSelectTopology('1P_SEMI_CONVERTER_SYM');
+      } else {
+        onSelectTopology('3P_SEMI_CONVERTER');
+      }
+      onChangeControls({ firingAngleAlpha: 45, enableFwd: true });
+    }
+  };
+
   return (
-    <div className="bg-slate-950/90 rounded-xl border border-slate-800/80 p-4 shadow-xl backdrop-blur-md flex flex-col justify-between">
-      {/* Header with Tabs */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
-        <div className="flex items-center gap-1 p-0.5 bg-slate-900 border border-slate-800 rounded-lg">
-          <button
-            onClick={() => setActiveTab('control')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeTab === 'control'
-                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Firing & PWM</span>
-          </button>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* ================= PANEL 1: CONVERTER TOPOLOGY ================= */}
+      <div className="bg-slate-950/90 rounded-xl border border-slate-800/80 p-4 shadow-xl backdrop-blur-md flex flex-col justify-between">
+        <div>
+          {/* Header */}
+          <div className="flex items-center gap-2 pb-2.5 border-b border-slate-800/80 mb-3 text-xs font-mono font-semibold text-slate-300">
+            <Cpu className="w-4 h-4 text-cyan-400" />
+            <span className="uppercase tracking-wider">CONVERTER TOPOLOGY</span>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('load')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeTab === 'load'
-                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span>Load Dynamics</span>
-          </button>
+          {/* Phase Selector: 1-Phase vs 3-Phase */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-900 border border-slate-800 rounded-lg mb-3 text-xs font-mono">
+            <button
+              onClick={() => {
+                if (!is1P) onSelectTopology('1P_FULL_BRIDGE_SCR');
+              }}
+              className={`py-1.5 px-3 rounded-md font-semibold transition-all ${
+                is1P
+                  ? 'bg-cyan-500 text-slate-950 shadow-md font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Single-Phase (1Φ)
+            </button>
+            <button
+              onClick={() => {
+                if (is1P) onSelectTopology('3P_FULL_BRIDGE_6PULSE');
+              }}
+              className={`py-1.5 px-3 rounded-md font-semibold transition-all ${
+                !is1P
+                  ? 'bg-cyan-500 text-slate-950 shadow-md font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Three-Phase (3Φ)
+            </button>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('grid')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeTab === 'grid'
-                ? 'bg-sky-500/10 text-sky-300 border border-sky-500/30 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Source Grid & Ls</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('device')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeTab === 'device'
-                ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Cpu className="w-3.5 h-3.5" />
-            <span>Semiconductors</span>
-          </button>
+          {/* Sub-Topology Buttons */}
+          {is1P ? (
+            <div className="grid grid-cols-2 gap-2 mb-3 text-xs font-mono">
+              <button
+                onClick={() => onSelectTopology('1P_FULL_BRIDGE_SCR')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '1P_FULL_BRIDGE_SCR' || topology === '1P_FULL_BRIDGE_DIODE'
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/60 font-bold'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Full-Bridge
+              </button>
+              <button
+                onClick={() => onSelectTopology('1P_HALF_WAVE')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '1P_HALF_WAVE'
+                    ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Half-Wave
+              </button>
+              <button
+                onClick={() => onSelectTopology('1P_SEMI_CONVERTER_SYM')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '1P_SEMI_CONVERTER_SYM' || topology === '1P_SEMI_CONVERTER_ASYM'
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/60 font-bold'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Semi-Converter
+              </button>
+              <button
+                onClick={() => onSelectTopology('1P_CENTER_TAP')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '1P_CENTER_TAP'
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/60 font-bold'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Center-Tapped
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 mb-3 text-xs font-mono">
+              <button
+                onClick={() => onSelectTopology('3P_FULL_BRIDGE_6PULSE')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '3P_FULL_BRIDGE_6PULSE'
+                    ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                6-Pulse Bridge
+              </button>
+              <button
+                onClick={() => onSelectTopology('3P_STAR_3PULSE')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '3P_STAR_3PULSE'
+                    ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                3-Pulse Star
+              </button>
+              <button
+                onClick={() => onSelectTopology('3P_SEMI_CONVERTER')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '3P_SEMI_CONVERTER'
+                    ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                3Φ Semi-Conv
+              </button>
+              <button
+                onClick={() => onSelectTopology('3P_12PULSE_DUAL')}
+                className={`py-1.5 px-2 rounded-lg border transition ${
+                  topology === '3P_12PULSE_DUAL'
+                    ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                12-Pulse Dual
+              </button>
+            </div>
+          )}
         </div>
 
-        <button
-          onClick={onResetDefaults}
-          title="Reset Parameters to Nominal Defaults"
-          className="flex items-center gap-1 px-2.5 py-1 text-xs text-slate-400 hover:text-white rounded bg-slate-900 border border-slate-800 hover:border-slate-700 transition"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Reset</span>
-        </button>
+        {/* Quick Device Setup */}
+        <div className="pt-2 border-t border-slate-900">
+          <span className="text-[11px] font-mono text-slate-400 block mb-1.5">Quick Device Setup:</span>
+          <div className="grid grid-cols-3 gap-1.5 text-xs font-mono">
+            <button
+              onClick={() => handleQuickSetup('diodes')}
+              className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[11px] transition"
+            >
+              All Diodes
+            </button>
+            <button
+              onClick={() => handleQuickSetup('thyristors')}
+              className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[11px] transition"
+            >
+              All Thyristors
+            </button>
+            <button
+              onClick={() => handleQuickSetup('semi')}
+              className="py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[11px] transition"
+            >
+              Semi-Conv
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Tab Panels */}
-      <div className="flex-1 min-h-[170px]">
-        {/* ---------------- TAB 1: FIRING & PWM ---------------- */}
-        {activeTab === 'control' && (
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between text-xs font-mono mb-1">
-                <span className="text-slate-300 font-medium">Gate Trigger Angle (α):</span>
-                <span className="text-amber-400 font-bold text-sm">{controls.firingAngleAlpha}°</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="180"
-                step="1"
-                value={controls.firingAngleAlpha}
-                onChange={(e) => onChangeControls({ firingAngleAlpha: Number(e.target.value) })}
-                className="w-full accent-amber-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
-              />
-
-              {/* Angle Presets */}
-              <div className="flex items-center gap-1.5 mt-2">
-                <span className="text-[11px] text-slate-400 font-mono mr-1">Presets:</span>
-                {alphaPresets.map((deg) => (
-                  <button
-                    key={deg}
-                    onClick={() => onChangeControls({ firingAngleAlpha: deg })}
-                    className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-colors ${
-                      controls.firingAngleAlpha === deg
-                        ? 'bg-amber-500 text-slate-950 font-bold border-amber-400'
-                        : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    {deg}°
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Special Controls for AFE and Dual Converter */}
-            {topology === 'PWM_AFE_BOOST' && (
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-900">
-                <div>
-                  <div className="flex justify-between text-xs font-mono mb-1">
-                    <span className="text-slate-300">Modulation Index (m_a):</span>
-                    <span className="text-sky-400 font-bold">{controls.pwmModulationIndex.toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="1.15"
-                    step="0.05"
-                    value={controls.pwmModulationIndex}
-                    onChange={(e) => onChangeControls({ pwmModulationIndex: Number(e.target.value) })}
-                    className="w-full accent-sky-500 h-1.5 bg-slate-800 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs font-mono mb-1">
-                    <span className="text-slate-300">Carrier Freq (f_sw):</span>
-                    <span className="text-sky-400 font-bold">{controls.pwmCarrierFreq} Hz</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="500"
-                    max="5000"
-                    step="250"
-                    value={controls.pwmCarrierFreq}
-                    onChange={(e) => onChangeControls({ pwmCarrierFreq: Number(e.target.value) })}
-                    className="w-full accent-sky-500 h-1.5 bg-slate-800 rounded-lg"
-                  />
-                </div>
-              </div>
-            )}
-
-            {topology === 'DUAL_CONVERTER_4Q' && (
-              <div className="flex items-center gap-4 pt-2 border-t border-slate-900 text-xs font-mono">
-                <span className="text-slate-300">Mode:</span>
-                <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="dualMode"
-                    checked={controls.dualConverterMode === 'non_circulating'}
-                    onChange={() => onChangeControls({ dualConverterMode: 'non_circulating' })}
-                    className="accent-amber-500"
-                  />
-                  <span>Non-Circulating Current</span>
-                </label>
-                <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="dualMode"
-                    checked={controls.dualConverterMode === 'circulating'}
-                    onChange={() => onChangeControls({ dualConverterMode: 'circulating' })}
-                    className="accent-amber-500"
-                  />
-                  <span>Circulating Current (Reactor Lc)</span>
-                </label>
-              </div>
-            )}
+      {/* ================= PANEL 2: FIRING ANGLE α & FWD ================= */}
+      <div className="bg-slate-950/90 rounded-xl border border-slate-800/80 p-4 shadow-xl backdrop-blur-md flex flex-col justify-between">
+        <div>
+          {/* Header */}
+          <div className="flex items-center gap-2 pb-2.5 border-b border-slate-800/80 mb-3 text-xs font-mono font-semibold text-slate-300">
+            <Zap className="w-4 h-4 text-amber-400" />
+            <span className="uppercase tracking-wider">FIRING ANGLE α & FWD</span>
           </div>
-        )}
 
-        {/* ---------------- TAB 2: LOAD DYNAMICS ---------------- */}
-        {activeTab === 'load' && (
-          <div className="space-y-3">
-            {/* Load Type Selector */}
-            <div className="flex items-center gap-2 pb-1 border-b border-slate-900 text-xs font-mono">
-              <span className="text-slate-400">Load Type:</span>
-              {(['R', 'RL', 'RLE', 'RC', 'RLC'] as const).map((t) => (
+          {/* Firing Angle Slider */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between text-xs font-mono mb-1">
+              <span className="text-slate-300">Firing Angle (α):</span>
+              <span className="text-amber-400 font-bold text-sm">{controls.firingAngleAlpha}°</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="180"
+              step="1"
+              value={controls.firingAngleAlpha}
+              onChange={(e) => onChangeControls({ firingAngleAlpha: Number(e.target.value) })}
+              className="w-full accent-amber-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+            />
+
+            {/* Presets */}
+            <div className="flex items-center justify-between gap-1 mt-2">
+              {alphaPresets.map((deg) => (
                 <button
-                  key={t}
-                  onClick={() => onChangeLoad({ type: t })}
-                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
-                    load.type === t
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  key={deg}
+                  onClick={() => onChangeControls({ firingAngleAlpha: deg })}
+                  className={`flex-1 py-0.5 text-[11px] font-mono rounded border transition ${
+                    controls.firingAngleAlpha === deg
+                      ? 'bg-amber-500 text-slate-950 font-bold border-amber-400 shadow-sm'
+                      : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  {t}
+                  {deg}°
                 </button>
               ))}
             </div>
+          </div>
+        </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {/* Resistance R */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Load Resistance (R):</span>
-                  <span className="text-emerald-400 font-bold">{load.r} Ω</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="50"
-                  step="0.5"
-                  value={load.r}
-                  onChange={(e) => onChangeLoad({ r: Number(e.target.value) })}
-                  className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg"
-                />
+        {/* Freewheeling Diode (D_FW) Controls */}
+        <div className="pt-3 border-t border-slate-900 space-y-2">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-slate-300 font-medium">Freewheeling Diode (D_FW):</span>
+            <button
+              onClick={() => onChangeControls({ enableFwd: !controls.enableFwd })}
+              className={`px-3 py-1 rounded text-xs font-bold transition border ${
+                controls.enableFwd
+                  ? 'bg-emerald-950 text-emerald-300 border-emerald-600/70 shadow-sm'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              {controls.enableFwd ? 'Connected' : 'Disconnected'}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-slate-400 text-[11px]">Diode Conduction:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                isDfwActive
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-600/60 animate-pulse'
+                  : 'bg-slate-900 text-slate-500 border-slate-800'
+              }`}
+            >
+              {isDfwActive ? 'Active (Conducting)' : 'Reverse Blocking (Off)'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ================= PANEL 3: LOAD & SOURCE PARAMETERS ================= */}
+      <div className="bg-slate-950/90 rounded-xl border border-slate-800/80 p-4 shadow-xl backdrop-blur-md flex flex-col justify-between">
+        <div>
+          {/* Header */}
+          <div className="flex items-center gap-2 pb-2.5 border-b border-slate-800/80 mb-3 text-xs font-mono font-semibold text-slate-300">
+            <Activity className="w-4 h-4 text-emerald-400" />
+            <span className="uppercase tracking-wider">LOAD & SOURCE PARAMETERS</span>
+          </div>
+
+          {/* Load Selector Buttons: R Load, RL Load, RLE Load */}
+          <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg mb-3 text-xs font-mono">
+            {(['R', 'RL', 'RLE'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => onChangeLoad({ type: t })}
+                className={`py-1 rounded font-semibold transition ${
+                  load.type === t
+                    ? 'bg-emerald-500 text-slate-950 font-bold shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {t} Load
+              </button>
+            ))}
+          </div>
+
+          {/* Sliders */}
+          <div className="space-y-2.5 text-xs font-mono">
+            {/* Resistance R */}
+            <div>
+              <div className="flex justify-between mb-1">
+                <span className="text-slate-300">R (Resistance):</span>
+                <span className="text-emerald-400 font-bold">{load.r} Ω</span>
               </div>
+              <input
+                type="range"
+                min="1"
+                max="50"
+                step="1"
+                value={load.r}
+                onChange={(e) => onChangeLoad({ r: Number(e.target.value) })}
+                className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+              />
+            </div>
 
-              {/* Inductance L */}
+            {/* Inductance L (if RL or RLE) */}
+            {load.type !== 'R' && (
               <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Load Inductance (L):</span>
-                  <span className="text-sky-400 font-bold">{(load.l * 1000).toFixed(0)} mH</span>
+                <div className="flex justify-between mb-1">
+                  <span className="text-slate-300">L (Inductance):</span>
+                  <span className="text-amber-400 font-bold">{(load.l * 1000).toFixed(0)} mH</span>
                 </div>
                 <input
                   type="range"
                   min="0.001"
-                  max="0.2"
-                  step="0.005"
+                  max="0.100"
+                  step="0.002"
                   value={load.l}
                   onChange={(e) => onChangeLoad({ l: Number(e.target.value) })}
-                  className="w-full accent-sky-500 h-1.5 bg-slate-800 rounded-lg"
+                  className="w-full accent-amber-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
                 />
               </div>
+            )}
 
-              {/* Back-EMF E */}
+            {/* Source RMS */}
+            <div>
+              <div className="flex justify-between mb-1">
+                <span className="text-slate-300">Source RMS:</span>
+                <span className="text-cyan-400 font-bold">{grid.vRms} V</span>
+              </div>
+              <input
+                type="range"
+                min="24"
+                max="480"
+                step="6"
+                value={grid.vRms}
+                onChange={(e) => onChangeGrid({ vRms: Number(e.target.value) })}
+                className="w-full accent-cyan-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+              />
+            </div>
+
+            {/* Back-EMF E (if RLE) */}
+            {load.type === 'RLE' && (
               <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Back-EMF (E / Battery):</span>
+                <div className="flex justify-between mb-1">
+                  <span className="text-slate-300">Back-EMF (E):</span>
                   <span className="text-pink-400 font-bold">{load.e} V</span>
                 </div>
                 <input
@@ -278,205 +402,12 @@ export const ParametricControls: React.FC<ParametricControlsProps> = ({
                   step="5"
                   value={load.e}
                   onChange={(e) => onChangeLoad({ e: Number(e.target.value) })}
-                  className="w-full accent-pink-500 h-1.5 bg-slate-800 rounded-lg"
+                  className="w-full accent-pink-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
                 />
               </div>
-
-              {/* Filter Capacitor C */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Filter Capacitor (C):</span>
-                  <span className="text-purple-400 font-bold">{(load.c * 1e6).toFixed(0)} µF</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.00001"
-                  max="0.002"
-                  step="0.00005"
-                  value={load.c}
-                  onChange={(e) => onChangeLoad({ c: Number(e.target.value) })}
-                  className="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-            </div>
+            )}
           </div>
-        )}
-
-        {/* ---------------- TAB 3: SOURCE GRID & LS ---------------- */}
-        {activeTab === 'grid' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              {/* RMS Voltage */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Source Voltage (V_rms):</span>
-                  <span className="text-sky-400 font-bold">{grid.vRms} V</span>
-                </div>
-                <input
-                  type="range"
-                  min="24"
-                  max="480"
-                  step="12"
-                  value={grid.vRms}
-                  onChange={(e) => onChangeGrid({ vRms: Number(e.target.value) })}
-                  className="w-full accent-sky-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Frequency */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Grid Frequency (f):</span>
-                  <span className="text-sky-400 font-bold">{grid.frequency} Hz</span>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  {[50, 60, 400].map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => onChangeGrid({ frequency: f })}
-                      className={`px-3 py-1 rounded text-xs font-mono font-medium transition ${
-                        grid.frequency === f
-                          ? 'bg-sky-500 text-slate-950 font-bold'
-                          : 'bg-slate-900 border border-slate-800 text-slate-300'
-                      }`}
-                    >
-                      {f} Hz
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Source Inductance Ls */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Source Line Inductance (Ls):</span>
-                  <span className="text-amber-400 font-bold">{(grid.sourceInductanceLs * 1000).toFixed(2)} mH</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.000"
-                  max="0.010"
-                  step="0.0002"
-                  value={grid.sourceInductanceLs}
-                  onChange={(e) => onChangeGrid({ sourceInductanceLs: Number(e.target.value) })}
-                  className="w-full accent-amber-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Source Resistance Rs */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Source Resistance (Rs):</span>
-                  <span className="text-amber-400 font-bold">{grid.sourceResistanceRs.toFixed(2)} Ω</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.01"
-                  max="1.0"
-                  step="0.02"
-                  value={grid.sourceResistanceRs}
-                  onChange={(e) => onChangeGrid({ sourceResistanceRs: Number(e.target.value) })}
-                  className="w-full accent-amber-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ---------------- TAB 4: SEMICONDUCTORS ---------------- */}
-        {activeTab === 'device' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              {/* Threshold Vf0 */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Forward Drop (V_F0):</span>
-                  <span className="text-purple-400 font-bold">{semi.vf0.toFixed(2)} V</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.4"
-                  max="2.5"
-                  step="0.05"
-                  value={semi.vf0}
-                  onChange={(e) => onChangeSemi({ vf0: Number(e.target.value) })}
-                  className="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Dynamic Resistance rd */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">On-state Resistance (r_d):</span>
-                  <span className="text-purple-400 font-bold">{(semi.rd * 1000).toFixed(1)} mΩ</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.001"
-                  max="0.080"
-                  step="0.002"
-                  value={semi.rd}
-                  onChange={(e) => onChangeSemi({ rd: Number(e.target.value) })}
-                  className="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Turn-off Time tq */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Turn-Off Time (t_q):</span>
-                  <span className="text-purple-400 font-bold">{(semi.turnOffTimeTq * 1e6).toFixed(0)} µs</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.00001"
-                  max="0.0002"
-                  step="0.00001"
-                  value={semi.turnOffTimeTq}
-                  onChange={(e) => onChangeSemi({ turnOffTimeTq: Number(e.target.value) })}
-                  className="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Reverse Recovery Qrr */}
-              <div>
-                <div className="flex justify-between text-xs font-mono mb-1">
-                  <span className="text-slate-300">Recovery Charge (Q_rr):</span>
-                  <span className="text-purple-400 font-bold">{(semi.qrr * 1e6).toFixed(0)} µC</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.000005"
-                  max="0.0002"
-                  step="0.00001"
-                  value={semi.qrr}
-                  onChange={(e) => onChangeSemi({ qrr: Number(e.target.value) })}
-                  className="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-            </div>
-
-            {/* RC Snubber Toggle */}
-            <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs font-mono">
-              <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={semi.enableSnubber}
-                  onChange={(e) => onChangeSemi({ enableSnubber: e.target.checked })}
-                  className="rounded accent-purple-500"
-                />
-                <span className="font-medium text-slate-200">Enable RC Snubber Network (dv/dt Protection)</span>
-              </label>
-
-              {semi.enableSnubber && (
-                <div className="flex items-center gap-3 text-slate-400">
-                  <span>Rs = {semi.snubberRs} Ω</span>
-                  <span>Cs = {(semi.snubberCs * 1e9).toFixed(0)} nF</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

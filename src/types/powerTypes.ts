@@ -54,6 +54,7 @@ export interface ConverterControls {
   pwmCarrierFreq: number; // Hz
   dualConverterMode: 'circulating' | 'non_circulating';
   quadrantTarget: 1 | 2 | 3 | 4;
+  enableFwd: boolean; // Freewheeling diode D_FW connected
 }
 
 export interface SwitchState {
@@ -96,6 +97,7 @@ export interface SimulationStep {
   switchStates: SwitchState[];
   alphaRad: number;
   vCap: number; // capacitor voltage if filtered
+  activePairName: string; // Active conduction pair (e.g. 'T1', 'DFW', 'T1-T2', 'T3-T4')
 }
 
 export interface PowerMetrics {

@@ -360,7 +360,7 @@ export function simulateConverter(
     const vs = vsa;
 
     // Output voltage raw waveform & switch status
-    const { voRaw, isOverlapping, activeSwitchIds, t1State } = calculateRawInstantaneousVoltage(
+    const { voRaw, isOverlapping, activeSwitchIds, t1State, activePairName } = calculateRawInstantaneousVoltage(
       wt,
       topology,
       Vm,
@@ -441,6 +441,7 @@ export function simulateConverter(
       switchStates,
       alphaRad,
       vCap: current_vCap,
+      activePairName,
     });
 
     sumVo += vo;
@@ -609,111 +610,151 @@ function calculateRawInstantaneousVoltage(
   isOverlapping: boolean;
   activeSwitchIds: string[];
   t1State: { isConducting: boolean };
+  activePairName: string;
 } {
   let voRaw = 0;
   let isOverlapping = false;
   let activeSwitchIds: string[] = [];
   let t1IsConducting = false;
+  let activePairName = 'OFF';
 
-  // Normalized angle in cycle
+  // Normalized angle in cycle [0, 2pi)
   const wtMod2Pi = wt % TWO_PI;
 
   switch (topology) {
     case '1P_HALF_WAVE': {
-      // Switch T1 conducts from alpha to beta (or pi)
-      const firingPt = alphaRad;
-      const turnOffPt = isDcm ? betaRad : Math.PI;
-
-      if (wtMod2Pi >= firingPt && wtMod2Pi < turnOffPt) {
-        voRaw = Vm * Math.sin(wtMod2Pi);
-        activeSwitchIds = ['T1'];
-        t1IsConducting = true;
+      if (controls.enableFwd) {
+        // With Freewheeling Diode (D_FW) connected:
+        // From alpha to pi: T1 conducts, vo = Vm*sin(wt)
+        // From pi to 2pi (and 0 to alpha): D_FW conducts, vo = 0
+        if (wtMod2Pi >= alphaRad && wtMod2Pi < Math.PI) {
+          voRaw = Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T1'];
+          t1IsConducting = true;
+          activePairName = 'T1';
+        } else {
+          // Freewheeling interval
+          voRaw = 0;
+          activeSwitchIds = ['DFW'];
+          activePairName = 'DFW';
+        }
       } else {
-        voRaw = 0;
+        // Without Freewheeling Diode:
+        // Switch T1 conducts from alpha to beta (can pull output negative!)
+        const turnOffPt = isDcm ? betaRad : Math.PI;
+        if (wtMod2Pi >= alphaRad && wtMod2Pi < turnOffPt) {
+          voRaw = Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T1'];
+          t1IsConducting = true;
+          activePairName = 'T1';
+        } else {
+          voRaw = 0;
+          activeSwitchIds = [];
+          activePairName = 'OFF';
+        }
       }
       break;
     }
 
     case '1P_CENTER_TAP':
     case '1P_FULL_BRIDGE_SCR': {
-      // 2 pulses per cycle.
-      // Pulse 1: alpha to alpha + pi (switches T1, T2)
-      // Pulse 2: alpha + pi to alpha + 2pi (switches T3, T4)
-      const pulse1Start = alphaRad;
-      const pulse1End = isDcm ? Math.min(alphaRad + Math.PI, betaRad) : alphaRad + Math.PI;
-      const pulse2Start = alphaRad + Math.PI;
-      const pulse2End = isDcm
-        ? Math.min(alphaRad + TWO_PI, betaRad + Math.PI)
-        : alphaRad + TWO_PI;
-
-      // Commutation overlap region
-      const inOverlap1 = wtMod2Pi >= pulse1Start && wtMod2Pi < pulse1Start + muRad;
-      const inOverlap2 = wtMod2Pi >= pulse2Start && wtMod2Pi < pulse2Start + muRad;
-
-      if (inOverlap1 || inOverlap2) {
-        isOverlapping = true;
-        voRaw = 0; // In overlap, line reactance shorts output momentarily
-        activeSwitchIds = ['T1', 'T2', 'T3', 'T4'];
-        t1IsConducting = true;
-      } else if (wtMod2Pi >= pulse1Start && wtMod2Pi < pulse1End) {
-        voRaw = Vm * Math.sin(wtMod2Pi);
-        activeSwitchIds = ['T1', 'T2'];
-        t1IsConducting = true;
-      } else if (
-        (wtMod2Pi >= pulse2Start && wtMod2Pi < pulse2End) ||
-        (pulse2End > TWO_PI && wtMod2Pi < pulse2End - TWO_PI)
-      ) {
-        voRaw = -Vm * Math.sin(wtMod2Pi);
-        activeSwitchIds = ['T3', 'T4'];
+      if (controls.enableFwd) {
+        // With FWD connected: clamps negative excursions
+        if (wtMod2Pi >= alphaRad && wtMod2Pi < Math.PI) {
+          voRaw = Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T1', 'T2'];
+          t1IsConducting = true;
+          activePairName = 'T1-T2';
+        } else if (wtMod2Pi >= Math.PI && wtMod2Pi < Math.PI + alphaRad) {
+          voRaw = 0;
+          activeSwitchIds = ['DFW'];
+          activePairName = 'DFW';
+        } else if (wtMod2Pi >= Math.PI + alphaRad && wtMod2Pi < TWO_PI) {
+          voRaw = -Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T3', 'T4'];
+          activePairName = 'T3-T4';
+        } else {
+          voRaw = 0;
+          activeSwitchIds = ['DFW'];
+          activePairName = 'DFW';
+        }
       } else {
-        voRaw = 0;
+        // Standard fully-controlled full-bridge (can be 2-quadrant)
+        const pulse1Start = alphaRad;
+        const pulse1End = isDcm ? Math.min(alphaRad + Math.PI, betaRad) : alphaRad + Math.PI;
+        const pulse2Start = alphaRad + Math.PI;
+        const pulse2End = isDcm
+          ? Math.min(alphaRad + TWO_PI, betaRad + Math.PI)
+          : alphaRad + TWO_PI;
+
+        const inOverlap1 = wtMod2Pi >= pulse1Start && wtMod2Pi < pulse1Start + muRad;
+        const inOverlap2 = wtMod2Pi >= pulse2Start && wtMod2Pi < pulse2Start + muRad;
+
+        if (inOverlap1 || inOverlap2) {
+          isOverlapping = true;
+          voRaw = 0;
+          activeSwitchIds = ['T1', 'T2', 'T3', 'T4'];
+          t1IsConducting = true;
+          activePairName = inOverlap1 ? 'T1-T2 / T3-T4 (μ)' : 'T3-T4 / T1-T2 (μ)';
+        } else if (wtMod2Pi >= pulse1Start && wtMod2Pi < pulse1End) {
+          voRaw = Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T1', 'T2'];
+          t1IsConducting = true;
+          activePairName = 'T1-T2';
+        } else if (
+          (wtMod2Pi >= pulse2Start && wtMod2Pi < pulse2End) ||
+          (pulse2End > TWO_PI && wtMod2Pi < pulse2End - TWO_PI)
+        ) {
+          voRaw = -Vm * Math.sin(wtMod2Pi);
+          activeSwitchIds = ['T3', 'T4'];
+          activePairName = 'T3-T4';
+        } else {
+          voRaw = 0;
+          activePairName = 'OFF';
+        }
       }
       break;
     }
 
     case '1P_FULL_BRIDGE_DIODE': {
-      // Diodes naturally conduct: D1, D2 when vs > 0; D3, D4 when vs < 0
       const isPos = Math.sin(wtMod2Pi) >= 0;
       voRaw = Math.abs(Vm * Math.sin(wtMod2Pi));
       activeSwitchIds = isPos ? ['D1', 'D2'] : ['D3', 'D4'];
       t1IsConducting = isPos;
+      activePairName = isPos ? 'D1-D2' : 'D3-D4';
       break;
     }
 
     case '1P_SEMI_CONVERTER_SYM':
     case '1P_SEMI_CONVERTER_ASYM': {
-      // Symmetrical semi-converter: T1, T2 controlled, D1, D2 diodes (freewheeling at 0)
       const sinVal = Math.sin(wtMod2Pi);
       if (wtMod2Pi >= alphaRad && wtMod2Pi < Math.PI) {
         voRaw = Vm * sinVal;
         activeSwitchIds = ['T1', 'D2'];
         t1IsConducting = true;
+        activePairName = 'T1-D2';
       } else if (wtMod2Pi >= Math.PI && wtMod2Pi < Math.PI + alphaRad) {
-        // Freewheeling interval
         voRaw = 0;
-        activeSwitchIds = ['D1', 'D2'];
+        activeSwitchIds = ['DFW'];
+        activePairName = 'DFW';
       } else if (wtMod2Pi >= Math.PI + alphaRad && wtMod2Pi < TWO_PI) {
         voRaw = -Vm * sinVal;
         activeSwitchIds = ['T2', 'D1'];
+        activePairName = 'T2-D1';
       } else {
-        // Freewheeling before alpha
         voRaw = 0;
-        activeSwitchIds = ['D1', 'D2'];
+        activeSwitchIds = ['DFW'];
+        activePairName = 'DFW';
       }
       break;
     }
 
     case '3P_STAR_3PULSE': {
-      // 3 pulses per cycle: T1 conducts during Phase A highest, T2 Phase B, T3 Phase C
       const vA = Vm * Math.sin(wtMod2Pi);
       const vB = Vm * Math.sin(wtMod2Pi - (2 * Math.PI) / 3);
       const vC = Vm * Math.sin(wtMod2Pi + (2 * Math.PI) / 3);
 
-      // Natural commutation point is at 30 deg (pi/6)
       const fireT1 = Math.PI / 6 + alphaRad;
-      const fireT2 = (5 * Math.PI) / 6 + alphaRad;
-      const fireT3 = (9 * Math.PI) / 6 + alphaRad;
-
       const normAngle = (wtMod2Pi - fireT1 + TWO_PI) % TWO_PI;
       const period = (2 * Math.PI) / 3;
 
@@ -721,34 +762,26 @@ function calculateRawInstantaneousVoltage(
         voRaw = vA;
         activeSwitchIds = ['T1'];
         t1IsConducting = true;
+        activePairName = 'T1';
       } else if (normAngle < 2 * period) {
         voRaw = vB;
         activeSwitchIds = ['T2'];
+        activePairName = 'T2';
       } else {
         voRaw = vC;
         activeSwitchIds = ['T3'];
+        activePairName = 'T3';
       }
       break;
     }
 
     case '3P_FULL_BRIDGE_6PULSE':
     case 'DUAL_CONVERTER_4Q': {
-      // 6 pulses per cycle, each 60 degrees wide
-      // Natural commutation points start at pi/3 (60 deg) for phase voltage crossovers
       const VlinePeak = Math.sqrt(3) * Vm;
       const baseAngle = (wtMod2Pi - alphaRad - Math.PI / 3 + TWO_PI) % TWO_PI;
       const sector = Math.floor((baseAngle * 6) / TWO_PI);
       const angleInSector = baseAngle - (sector * Math.PI) / 3;
 
-      if (angleInSector < muRad) {
-        isOverlapping = true;
-        // Output voltage is average of line voltages during overlap
-        voRaw = VlinePeak * Math.sin(angleInSector + Math.PI / 3) * 0.5;
-      } else {
-        voRaw = VlinePeak * Math.sin(angleInSector + Math.PI / 3);
-      }
-
-      // Thyristor firing sequence: T1(A+), T2(C-), T3(B+), T4(A-), T5(C+), T6(B-)
       const switchPairs = [
         ['T1', 'T6'],
         ['T1', 'T2'],
@@ -759,11 +792,19 @@ function calculateRawInstantaneousVoltage(
       ];
       activeSwitchIds = switchPairs[sector % 6] || ['T1', 'T6'];
       t1IsConducting = activeSwitchIds.includes('T1');
+      activePairName = activeSwitchIds.join('-');
+
+      if (angleInSector < muRad) {
+        isOverlapping = true;
+        voRaw = VlinePeak * Math.sin(angleInSector + Math.PI / 3) * 0.5;
+        activePairName += ' (μ)';
+      } else {
+        voRaw = VlinePeak * Math.sin(angleInSector + Math.PI / 3);
+      }
       break;
     }
 
     case '3P_SEMI_CONVERTER': {
-      // Top 3 SCRs (T1, T3, T5), bottom 3 Diodes (D2, D4, D6)
       const VlinePeak = Math.sqrt(3) * Vm;
       const baseAngle = (wtMod2Pi - alphaRad + TWO_PI) % TWO_PI;
       const sector = Math.floor((baseAngle * 3) / TWO_PI);
@@ -771,35 +812,37 @@ function calculateRawInstantaneousVoltage(
 
       if (angleInSector < (2 * Math.PI) / 3 - alphaRad) {
         voRaw = VlinePeak * Math.abs(Math.sin(angleInSector + Math.PI / 3));
+        const pairs = [['T1', 'D2'], ['T3', 'D4'], ['T5', 'D6']];
+        activeSwitchIds = pairs[sector % 3];
+        activePairName = activeSwitchIds.join('-');
       } else {
-        voRaw = 0; // freewheeling diode conduction
+        voRaw = 0;
+        activeSwitchIds = ['DFW'];
+        activePairName = 'DFW';
       }
-      activeSwitchIds = ['T1', 'D2'];
-      t1IsConducting = true;
+      t1IsConducting = activeSwitchIds.includes('T1');
       break;
     }
 
     case '3P_12PULSE_DUAL': {
-      // 12-Pulse dual converter (two 6-pulse bridges displaced by 30 degrees)
       const VlinePeak = Math.sqrt(3) * Vm;
       const baseAngle1 = (wtMod2Pi - alphaRad + TWO_PI) % TWO_PI;
       const sector = Math.floor((baseAngle1 * 12) / TWO_PI);
       const angleInSector = baseAngle1 - (sector * Math.PI) / 6;
 
-      // 12-pulse sum of Bridge 1 + Bridge 2
       const voBridge1 = VlinePeak * Math.sin(angleInSector + Math.PI / 3);
       const voBridge2 = VlinePeak * Math.sin(angleInSector + Math.PI / 3 + Math.PI / 6);
-      voRaw = (voBridge1 + voBridge2) * 0.96; // tight 12-pulse ripple!
+      voRaw = (voBridge1 + voBridge2) * 0.96;
       activeSwitchIds = ['T1_Y', 'T6_Y', 'T1_D', 'T6_D'];
       t1IsConducting = true;
+      activePairName = '12P Y-Δ';
       break;
     }
 
     case 'PWM_AFE_BOOST': {
-      // Active Front End: Sinusoidal PWM switching with boost inductor
       const ma = controls.pwmModulationIndex;
-      const mf = controls.pwmCarrierFreq / 50; // ratio
-      const carrier = (Math.asin(Math.sin(mf * wtMod2Pi)) / Math.PI) * 2; // Triangle [-1, 1]
+      const mf = controls.pwmCarrierFreq / 50;
+      const carrier = (Math.asin(Math.sin(mf * wtMod2Pi)) / Math.PI) * 2;
       const referenceA = ma * Math.sin(wtMod2Pi);
       const gateA = referenceA > carrier;
 
@@ -807,6 +850,7 @@ function calculateRawInstantaneousVoltage(
       voRaw = boostDcBus;
       activeSwitchIds = gateA ? ['S1_IGBT', 'S4_IGBT'] : ['D1_FWD', 'D4_FWD'];
       t1IsConducting = gateA;
+      activePairName = gateA ? 'S1-S4' : 'D1-D4';
       break;
     }
   }
@@ -816,6 +860,7 @@ function calculateRawInstantaneousVoltage(
     isOverlapping,
     activeSwitchIds,
     t1State: { isConducting: t1IsConducting },
+    activePairName,
   };
 }
 
